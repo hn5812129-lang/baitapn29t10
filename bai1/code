@@ -1,0 +1,142 @@
+using System;
+using System.Data;
+using System.Drawing;
+using System.Windows.Forms;
+using MySql.Data.MySqlClient;
+using DAL; // Gọi tầng DAL để dùng DatabaseHelper và các hàm truy vấn
+
+namespace WinFormsApp16 // Lưu ý: namespace có thể là WinFormsApp16 tùy tên project của bạn
+{
+    public partial class frmBanHang : Form
+    {
+        private int selectedMaBan = -1;
+        private HoaDonDAL hoaDonDAL = new HoaDonDAL();
+        private BanAnDAL banAnDAL = new BanAnDAL();
+
+        public frmBanHang()
+        {
+            InitializeComponent();
+
+            // Đăng ký sự kiện tự động cho các ComboBox và Button nếu chưa có
+            LoadTableLayout();
+            LoadDanhMuc();
+
+            // Gắn sự kiện SelectedIndexChanged cho ComboBox danh mục
+            cbDanhMuc.SelectedIndexChanged += cbDanhMuc_SelectedIndexChanged;
+
+            // Gắn sự kiện click cho các nút bấm
+            btnThemMon.Click += btnThemMon_Click;
+            btnThanhToan.Click += btnThanhToan_Click;
+        }
+
+        // 1. Tạo sơ đồ bàn động dạng Button màu sắc dựa trên trạng thái
+        private void LoadTableLayout()
+        {
+            flpBanAn.Controls.Clear();
+            DataTable dt = banAnDAL.LayDanhSachBan();
+
+            foreach (DataRow row in dt.Rows)
+            {
+                Button btn = new Button
+                {
+                    Width = 100,
+                    Height = 100,
+                    Text = row["TenBan"].ToString() + "\n(" + row["TrangThai"].ToString() + ")",
+                    Tag = row["MaBan"],
+                    // Bàn "Trống" màu xanh, bàn "Có khách" màu đỏ
+                    BackColor = row["TrangThai"].ToString() == "Trống" ? Color.LightGreen : Color.LightCoral
+                };
+                btn.Click += Btn_Click;
+                flpBanAn.Controls.Add(btn);
+            }
+        }
+
+        // Sự kiện khi click chọn bàn trên sơ đồ
+        private void Btn_Click(object sender, EventArgs e)
+        {
+            Button btn = (Button)sender;
+            selectedMaBan = (int)btn.Tag;
+            lblBanDangChon.Text = "Đang chọn: " + btn.Text.Split('\n')[0];
+            LoadChiTietHoaDon(selectedMaBan);
+        }
+
+        // 2. Nạp chi tiết hóa đơn tạm của bàn bằng SqlDataAdapter + DataTable
+        private void LoadChiTietHoaDon(int maBan)
+        {
+            dgvChiTiet.DataSource = hoaDonDAL.LayChiTietHoaDonTheoBan(maBan);
+        }
+
+        // Nạp danh mục lên ComboBox
+        private void LoadDanhMuc()
+        {
+            DataTable dt = DatabaseHelper.ExecuteQuery("SELECT * FROM DanhMuc");
+            cbDanhMuc.DataSource = dt;
+            cbDanhMuc.DisplayMember = "TenDanhMuc";
+            cbDanhMuc.ValueMember = "MaDanhMuc";
+        }
+
+        // Thay đổi danh mục thì load lại danh sách món ăn tương ứng vào ComboBox món
+        private void cbDanhMuc_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (cbDanhMuc.SelectedValue != null && int.TryParse(cbDanhMuc.SelectedValue.ToString(), out int maDM))
+            {
+                // Đổi SqlParameter thành MySqlParameter
+                MySqlParameter[] p = { new MySqlParameter("@MaDM", maDM) };
+                DataTable dt = DatabaseHelper.ExecuteQuery("SELECT * FROM MonAn WHERE MaDanhMuc = @MaDM", p);
+                cbMonAn.DataSource = dt;
+                cbMonAn.DisplayMember = "TenMon";
+                cbMonAn.ValueMember = "MaMon";
+            }
+        }
+
+        // 3. Chức năng Thêm món vào bàn
+        private void btnThemMon_Click(object sender, EventArgs e)
+        {
+            if (selectedMaBan == -1)
+            {
+                MessageBox.Show("Vui lòng chọn bàn trước khi gọi món!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (cbMonAn.SelectedValue == null)
+            {
+                MessageBox.Show("Vui lòng chọn món ăn!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int maMon = (int)cbMonAn.SelectedValue;
+            int soLuong = (int)numSoLuong.Value;
+
+            hoaDonDAL.ThemMonVaoBan(selectedMaBan, maMon, soLuong);
+
+            // Cập nhật lại giao diện bàn và lưới chi tiết
+            LoadChiTietHoaDon(selectedMaBan);
+            LoadTableLayout();
+        }
+
+        // 4. Chức năng Thanh toán (Sử dụng SqlTransaction ngầm trong DAL)
+        private void btnThanhToan_Click(object sender, EventArgs e)
+        {
+            if (selectedMaBan == -1)
+            {
+                MessageBox.Show("Vui lòng chọn bàn cần thanh toán!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (hoaDonDAL.ThanhToan(selectedMaBan, out decimal tongTien))
+            {
+                MessageBox.Show($"Thanh toán thành công!\nTổng tiền: {tongTien:N0} VNĐ", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                // Reset lại giao diện
+                LoadChiTietHoaDon(selectedMaBan);
+                LoadTableLayout();
+                selectedMaBan = -1;
+                lblBanDangChon.Text = "Chưa chọn bàn";
+            }
+            else
+            {
+                MessageBox.Show("Bàn này không có hóa đơn hoặc giao dịch thất bại!", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+    }
+}
